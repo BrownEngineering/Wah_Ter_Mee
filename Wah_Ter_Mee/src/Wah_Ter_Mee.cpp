@@ -13,6 +13,7 @@
 #include "Adafruit_MQTT/Adafruit_MQTT.h"
 #include "Adafruit_GFX.h"
 #include "Adafruit_SSD1306.h"
+#include "IoTTimer.h"
 #include "Colors.h"
 #include "neopixel.h"
 #include "Adafruit_BME280.h"
@@ -33,9 +34,9 @@
 SYSTEM_MODE(MANUAL);
 
 
-const int EM_F_PUMP_PIN = D2;
+const int EM_F_PUMP_PIN = D3;
 const int CAP_SENSOR_PIN = A5;
-const int LED_CONT_PIN = D15;
+//const int LED_CONT_PIN = D15;
 
 int quality;
 int start = 0;
@@ -61,6 +62,10 @@ const unsigned int TWICE_PER_DAY = ((60000*60)*12);
 const unsigned int ONCE_PER_HOUR = (60000*60);
 const unsigned int ONCE_PER_MIN = 60000;
 
+bool shouldBreatheGreen, shouldBreatheBlue, shouldBlinkRed;
+bool lightControl = false;
+
+bool pumpIsRunning = false;
 bool status;
 char degree = 0xF8;
 int capValue;
@@ -76,6 +81,8 @@ Enviromental_Cond env_Cond;
 //Declarations
 Adafruit_BME280 bme;
 
+IoTTimer pumpTimer;
+
 Adafruit_NeoPixel pixel (pixcount, SPI1, WS2812B);
 
 AirQualitySensor sensor(A1);
@@ -87,8 +94,9 @@ void eventPayLoad(Enviromental_Cond env_Conditions);
 // void MQTT_connect();
 // bool MQTT_ping();
 void pixelFullBreathe(int start, int end, int c);
+void pixelFullBlink(int stpix, int enpix, int c);
 void pixelFill (int start, int end, int c);
-void pump_OnOff(const int EM_F_PUMP_PIN, const unsigned int PUMP_ON_TIME);
+//void pump_OnOff(const int EM_F_PUMP_PIN, const unsigned int PUMP_ON_TIME);
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -101,12 +109,20 @@ void setup() {
   delay(1000);
   display.clearDisplay();
 
+  pixel.begin();
+  pixel.setBrightness(45);
+  pixel.show();
+
   status = bme.begin(0x76);
   if(!status){
     Serial.printf("BME280 at 0x%02x failed to start\n", status);
   }
   pixelFill(start,end,indigo);
+  pixel.show();
+
   pinMode(CAP_SENSOR_PIN,INPUT);
+  pinMode(EM_F_PUMP_PIN,OUTPUT);
+  //pinMode(LED_CONT_PIN,OUTPUT);
 
   pixel_Flash_Timer = millis();
   lastAQ = millis();
@@ -117,7 +133,24 @@ void setup() {
 }
 //////////////////////////////////////////////////////////////////////////////////////////////////////////
 void loop() {
-
+  if(lightControl){
+    if (shouldBreatheGreen){
+      pixelFullBreathe(start,end,green);
+     // pixelFullBreathe(start,end,indigo);
+    }
+    if(shouldBreatheBlue){
+      pixelFullBreathe(start,end,blue);
+      //pixelFullBreathe(start,end,tomato);
+    }
+    if(shouldBlinkRed){
+      pixelFullBlink(start,end,red);
+    }
+  }//else{
+    //lightControl = false;
+    //pixel.clear;
+    //pixel.show;
+  
+  //}
 ///////////////////////////////////////////////////////////////////////////////////
 //BME_280 control
 ///////////////////////////////////////////////////////////////////////////////////
@@ -159,21 +192,24 @@ void loop() {
 
     if (quality == AirQualitySensor::FORCE_SIGNAL) {
      // AQFeed.publish(sensor.getValue());
-      if(millis()-pixel_Flash_Timer>FLASHTIME){
-        pixelFill(start,end,red);
-        pixel_Flash_Timer = millis();
+
+        lightControl = true;
+        shouldBlinkRed = true;
+        shouldBreatheBlue = false;
+        shouldBreatheGreen = false;
         // SEND SMS or EMAIL LOGIC here;
         Serial.printf("High pollution! Force signal active.\n");
-      }
+      
     } else if (quality == AirQualitySensor::HIGH_POLLUTION) {
       //  AQFeed.publish(sensor.getValue());
-        pixel_Flash_Timer = millis();
-        if(millis()-pixel_Flash_Timer>FLASHTIME){
-          pixelFill(start,end,red);
-          pixel_Flash_Timer = millis();
+ 
+        lightControl = true;
+        shouldBlinkRed = true;
+        shouldBreatheBlue = false;
+        shouldBreatheGreen = false;
           // SEND SMS or EMAIL LOGIC here;
           Serial.printf("High pollution!\n");
-        }
+        
       } else if (quality == AirQualitySensor::LOW_POLLUTION) {
           Serial.printf("Low pollution!\n");
 
@@ -195,34 +231,46 @@ void loop() {
 ///////////////////////////////////////////////////////////////////////////////////
 
   ////////////////////////////////////////////// Reads the soil sensor , sends value to SERIAL and OLED
-  if(millis()-lastSoil>ONCE_PER_HOUR/240){//(TWICE_PER_DAY/12)/240){
+  if(millis()-lastSoil>ONCE_PER_HOUR/120){//(TWICE_PER_DAY/12)/240){
     capValue = analogRead(CAP_SENSOR_PIN);
     Serial.printf("Cap sense = %i\n",capValue);
     //Soil_Moisture_Feed.publish(capValue*.0244);
-    Serial.printf("Soil Moisture Sent!\n");
-      if(capValue>=DRY_SOIL){
-        pump_OnOff(EM_F_PUMP_PIN,PUMP_ON_TIME);
-        Serial.printf("SOIL IS DRY\nh");
-        pixelFullBreathe(start,end,green);
-      }else if(capValue>=WET_SOIL){
-        pixelFullBreathe(start,end,blue);
-        Serial.printf("SOIL IS WET\n");
-        // SEND SMS or EMAIL LOGIC HERE;
+    //Serial.printf("Soil Moisture Sent!\n");
+    if(capValue>=DRY_SOIL){
+      if(!pumpIsRunning){
+        digitalWrite(EM_F_PUMP_PIN,HIGH);
+        pumpTimer.startTimer(PUMP_ON_TIME);
+        Serial.printf("SOIL IS DRY\n-------PUMP ON!\n");
+        lightControl = true;
+        shouldBlinkRed = false;
+        shouldBreatheBlue = false;
+        shouldBreatheGreen = true;
+        pumpIsRunning = true;
       }
-      // display.clearDisplay();
-      // display.setRotation(0);
-      // display.setTextSize(1);
-      // display.setTextColor(WHITE);
-      // display.setCursor(0,0);
-      // display.printf("Cap sense = %i\n",capValue);
-      // display.display();
+     }
+      if(capValue<=WET_SOIL){
+        lightControl = true;
+        shouldBreatheBlue = true;        
+        shouldBlinkRed = false;
+        shouldBreatheGreen = false;
+        Serial.printf("SOIL IS WET\n");
+      }
     lastSoil=millis();
   }
+  if((pumpIsRunning) && pumpTimer.isTimerReady()){
+    digitalWrite(EM_F_PUMP_PIN,LOW);
+    Serial.printf("Pump is OFF OFF\n");
+    pumpIsRunning = false;
+  }
+
     
-    
+        // SEND SMS or EMAIL LOGIC HERE;
+  }
+
+     
   // MQTT_connect();
   // MQTT_ping();
-}
+//}
  
 
 /////////////////////////////////////////////////////////////////////////////////////////////////
@@ -239,37 +287,50 @@ void loop() {
   t=millis()/1000.0; //returns time from particle in ms
   b=amp*sin(2*M_PI*1.0/5.0*t)+off;
 
+  pixel.setBrightness(b);
+
   for (j=stpix; j<=enpix; j++){
   pixel.setPixelColor(j, c);
-  pixel.setBrightness(b);
+
   }
    pixel.show();
 }
 
-// unsigned long lastPump = 0;  // Declare this globally or in the setup function
+  void pixelFullBlink(int stpix, int enpix, int c){
+  float t; //Time
+  int b; //Brightness
+  float off=255/2;
+  float amp=255/2;
+  int j;
 
-// void pump_OnOff(const int PUMP_PIN, const unsigned int PUMP_TIME){
-//     if(millis() - lastPump > PUMP_TIME) {
-//         Serial.printf("Pumping!\n");
-//         digitalWrite(PUMP_PIN, HIGH);  // Turn on the pump
-//         lastPump = millis();  // Update the lastPump time
-//     } else {
-//         digitalWrite(PUMP_PIN, LOW);  // Turn off the pump
+  t=millis()/1000.0; //returns time from particle in ms
+  b=amp*sin(2*M_PI*1.0/1.5*t)+off;
+
+  pixel.setBrightness(b);
+
+  for (j=stpix; j<=enpix; j++){
+  pixel.setPixelColor(j, c);
+
+  }
+   pixel.show();
+}
+
+// void pump_OnOff(const int PUMP_PIN, const unsigned int PUMP_TIME) {
+//   static unsigned int lastPump = 0;
+//   static bool pumpFlag = false;
+//     if (!pumpFlag) {
+//       Serial.printf("Pumping!\n");
+//       digitalWrite(PUMP_PIN,HIGH);
+//       pumpFlag = true;
+//       lastPump = millis();
+//     }
+//     else if ((millis()-lastPump>PUMP_TIME)) {
+//       digitalWrite(PUMP_PIN, LOW);
+//       Serial.printf("PUMP OFF OFF OFF\n");
+//       pumpFlag = false;
 //     }
 // }
-    static unsigned int lastPump = 0;
-void pump_OnOff(const int PUMP_PIN, const unsigned int PUMP_TIME) {
 
-    if (millis()-lastPump<=PUMP_TIME) {
-        Serial.printf("Pumping!\n");
-        digitalWrite(PUMP_PIN, HIGH);
-    }
-    if (millis()-lastPump>PUMP_TIME) {
-        digitalWrite(PUMP_PIN, LOW);
-        lastPump=millis();
-    }
-}
-  
  void pixelFill (int stpix, int enpix, int c){
   int j;
   for (j=stpix; j<=enpix; j++){
