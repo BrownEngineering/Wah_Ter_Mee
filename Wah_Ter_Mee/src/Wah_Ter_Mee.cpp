@@ -20,18 +20,18 @@
 #include "JsonParserGeneratorRK.h"
 #include "credentials.h"
 
-//TCPClient TheClient; 
+TCPClient TheClient; 
 
-//Adafruit_MQTT_SPARK mqtt(&TheClient,AIO_SERVER,AIO_SERVERPORT,AIO_USERNAME,AIO_KEY); 
+Adafruit_MQTT_SPARK mqtt(&TheClient,AIO_SERVER,AIO_SERVERPORT,AIO_USERNAME,AIO_KEY); 
 
-// Adafruit_MQTT_Subscribe water_Button_Feed = Adafruit_MQTT_Subscribe(&mqtt, AIO_USERNAME "/feeds/input-data"); 
+Adafruit_MQTT_Subscribe water_Button_Feed = Adafruit_MQTT_Subscribe(&mqtt, AIO_USERNAME "/feeds/wah-ter-mee-button"); 
 
-// Adafruit_MQTT_Publish AQFeed = Adafruit_MQTT_Publish(&mqtt, AIO_USERNAME "/feeds/seeed-air-qual");
-// Adafruit_MQTT_Publish Soil_Moisture_Feed = Adafruit_MQTT_Publish(&mqtt, AIO_USERNAME "/feeds/soil_moisture");
-// Adafruit_MQTT_Publish enviroFeed= Adafruit_MQTT_Publish(&mqtt, AIO_USERNAME "/feeds/enviromental_cond");
+Adafruit_MQTT_Publish AQFeed = Adafruit_MQTT_Publish(&mqtt, AIO_USERNAME "/feeds/seeed-air-qual");
+Adafruit_MQTT_Publish Soil_Moisture_Feed = Adafruit_MQTT_Publish(&mqtt, AIO_USERNAME "/feeds/soil_moisture");
+Adafruit_MQTT_Publish enviroFeed= Adafruit_MQTT_Publish(&mqtt, AIO_USERNAME "/feeds/enviromental_cond");
 
  
-SYSTEM_MODE(MANUAL);
+SYSTEM_MODE(AUTOMATIC);
 
 
 const int EM_F_PUMP_PIN = D3;
@@ -70,6 +70,9 @@ bool status;
 char degree = 0xF8;
 int capValue;
 float qualValue;
+float AQ_Adjusted;
+int soil_Adjusted; 
+int OnOff;
 
 struct Enviromental_Cond{
   float TempF;
@@ -91,12 +94,13 @@ const int OLED_RESET =-1;
 Adafruit_SSD1306 display(OLED_RESET);
 
 void eventPayLoad(Enviromental_Cond env_Conditions);
-// void MQTT_connect();
-// bool MQTT_ping();
+void MQTT_connect();
+bool MQTT_ping();
 void pixelFullBreathe(int start, int end, int c);
 void pixelFullBlink(int stpix, int enpix, int c);
 void pixelFill (int start, int end, int c);
 //void pump_OnOff(const int EM_F_PUMP_PIN, const unsigned int PUMP_ON_TIME);
+
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -112,6 +116,13 @@ void setup() {
   pixel.begin();
   pixel.setBrightness(45);
   pixel.show();
+
+  // WiFi.on();
+  // WiFi.connect();
+  // while(WiFi.connecting()) {
+  //   Serial.printf(".");
+  // }
+  // Serial.printf("\n\n");
 
   status = bme.begin(0x76);
   if(!status){
@@ -129,6 +140,10 @@ void setup() {
   lastBME = millis();
   lastSoil = millis();
   lastTime = millis();
+
+  // Setup MQTT subscription
+  mqtt.subscribe(&water_Button_Feed);
+
 
 }
 //////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -164,10 +179,18 @@ void loop() {
   PressHg = (PressPA/3386.38672536);
   HumidRH = bme.readHumidity();
 
-    Serial.printf("The tempurature is %.001f%cC\n%.001f%cF\n", tempC,degree,tempF,degree);
-    Serial.printf("Current pressure is %.001fPa\n%.001f or Hg\n",PressPA,PressHg);
-    Serial.printf("Humidity is %.001f\n",HumidRH);
-    
+  env_Cond.PressHG = PressHg;
+  env_Cond.Hum = HumidRH;
+  env_Cond.TempF = tempF;
+
+
+  Serial.printf("The tempurature is %.001f%cC\n%.001f%cF\n", tempC,degree,tempF,degree);
+  Serial.printf("Current pressure is %.001fPa\n%.001f or Hg\n",PressPA,PressHg);
+  Serial.printf("Humidity is %.001f\n",HumidRH);
+
+  eventPayLoad(env_Cond);
+  Serial.printf(" BME CONDITIONS SENT\n");
+
     display.setTextSize(1);
     display.setTextColor(WHITE);
     display.clearDisplay();// clear, set cursor and print IN THIS ORDER
@@ -188,10 +211,11 @@ void loop() {
 
   quality =sensor.slope();
   if(millis()-lastAQ>ONCE_PER_HOUR/120){
-    Serial.printf("Sensor value: %i\n",sensor.getValue());
-
+    Serial.printf("AIR QUALITY Sensor value: %i\n \n",sensor.getValue());
+    AQ_Adjusted = (sensor.getValue()*.0244);
+    Serial.printf("AQ adjusted = %00f\n \n",AQ_Adjusted);
     if (quality == AirQualitySensor::FORCE_SIGNAL) {
-     // AQFeed.publish(sensor.getValue());
+      AQFeed.publish(sensor.getValue()*.0244);
 
         lightControl = true;
         shouldBlinkRed = true;
@@ -201,10 +225,10 @@ void loop() {
         Serial.printf("High pollution! Force signal active.\n");
       
     } else if (quality == AirQualitySensor::HIGH_POLLUTION) {
-      //  AQFeed.publish(sensor.getValue());
+        AQFeed.publish(sensor.getValue()*.0244);
  
         lightControl = true;
-        shouldBlinkRed = true;
+        //shouldBlinkRed = true;
         shouldBreatheBlue = false;
         shouldBreatheGreen = false;
           // SEND SMS or EMAIL LOGIC here;
@@ -221,7 +245,7 @@ void loop() {
 
   }
    if(millis()-lastAQ_PUB>PUBLISH_TIME/12){
-    //AQFeed.publish(sensor.getValue());
+    AQFeed.publish(sensor.getValue()*.0244);
     Serial.printf("Air Quality Sent!\n");
     lastAQ_PUB=millis();
   }
@@ -233,9 +257,10 @@ void loop() {
   ////////////////////////////////////////////// Reads the soil sensor , sends value to SERIAL and OLED
   if(millis()-lastSoil>ONCE_PER_HOUR/120){//(TWICE_PER_DAY/12)/240){
     capValue = analogRead(CAP_SENSOR_PIN);
-    Serial.printf("Cap sense = %i\n",capValue);
-    //Soil_Moisture_Feed.publish(capValue*.0244);
-    //Serial.printf("Soil Moisture Sent!\n");
+    soil_Adjusted = 100 - (capValue*100/4095);
+    Serial.printf("Cap sense = %i\n",soil_Adjusted );
+    Soil_Moisture_Feed.publish(soil_Adjusted);
+    Serial.printf("Soil Moisture Sent!\n");
     if(capValue>=DRY_SOIL){
       if(!pumpIsRunning){
         digitalWrite(EM_F_PUMP_PIN,HIGH);
@@ -263,14 +288,26 @@ void loop() {
     pumpIsRunning = false;
   }
 
+
+  //////////////////////////////////////////////////////////////////////////////////////
+  //Adafruit Wah_Ter_Mee button
+  //////////////////////////////////////////////////////////////////////////////////////
+  Adafruit_MQTT_Subscribe *subscription;
+  while ((subscription = mqtt.readSubscription(100))) {
+    if (subscription == &water_Button_Feed) {
+    OnOff = atoi ((char*)water_Button_Feed.lastread);
+    digitalWrite(EM_F_PUMP_PIN,OnOff);
+    Serial.printf("OnOff Button = %i\n",OnOff);
+  }
+
     
         // SEND SMS or EMAIL LOGIC HERE;
   }
 
      
-  // MQTT_connect();
-  // MQTT_ping();
-//}
+  MQTT_connect();
+  MQTT_ping();
+}
  
 
 /////////////////////////////////////////////////////////////////////////////////////////////////
@@ -351,40 +388,40 @@ void eventPayLoad(Enviromental_Cond env_Conditions){
     jw.insertKeyValue("Tempurate F",env_Conditions.TempF);
     jw.insertKeyValue("Pressure HG",env_Conditions.PressHG);
   }
-  //enviroFeed.publish(jw.getBuffer());
+  enviroFeed.publish(jw.getBuffer());
 }
 
-// void MQTT_connect() {
-//   int8_t ret;
+void MQTT_connect() {
+  int8_t ret;
  
-  // Return if already connected.
-//   if (mqtt.connected()) {
-//     return;
-//   }
-//   Serial.print("Connecting to MQTT... ");
+  //Return if already connected.
+  if (mqtt.connected()) {
+    return;
+  }
+  Serial.print("Connecting to MQTT... ");
  
-//   while ((ret = mqtt.connect()) != 0) { // connect will return 0 for connected
-//        Serial.printf("Error Code %s\n",mqtt.connectErrorString(ret));
-//        Serial.printf("Retrying MQTT connection in 5 seconds...\n");
-//        mqtt.disconnect();
-//        delay(5000);  // wait 5 seconds and try again
-//   }
-//   Serial.printf("MQTT Connected!\n");
-// }
+  while ((ret = mqtt.connect()) != 0) { // connect will return 0 for connected
+       Serial.printf("Error Code %s\n",mqtt.connectErrorString(ret));
+       Serial.printf("Retrying MQTT connection in 5 seconds...\n");
+       mqtt.disconnect();
+       delay(5000);  // wait 5 seconds and try again
+  }
+  Serial.printf("MQTT Connected!\n");
+}
 
-// bool MQTT_ping() {
-//   static unsigned int last;
-//   bool pingStatus;
+bool MQTT_ping() {
+  static unsigned int last;
+  bool pingStatus;
 
-//   if ((millis()-last)>120000) {
-//       Serial.printf("Pinging MQTT \n");
-//       pingStatus = mqtt.ping();
-//       if(!pingStatus) {
-//         Serial.printf("Disconnecting \n");
-//         mqtt.disconnect();
-//       }
-//       last = millis();
-//   }
-//   return pingStatus;
-// }
+  if ((millis()-last)>120000) {
+      Serial.printf("Pinging MQTT \n");
+      pingStatus = mqtt.ping();
+      if(!pingStatus) {
+        Serial.printf("Disconnecting \n");
+        mqtt.disconnect();
+      }
+      last = millis();
+  }
+  return pingStatus;
+}
 
