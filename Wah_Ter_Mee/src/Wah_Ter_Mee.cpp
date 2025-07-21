@@ -29,6 +29,7 @@ Adafruit_MQTT_Subscribe water_Button_Feed = Adafruit_MQTT_Subscribe(&mqtt, AIO_U
 Adafruit_MQTT_Publish AQFeed = Adafruit_MQTT_Publish(&mqtt, AIO_USERNAME "/feeds/seeed-air-qual");
 Adafruit_MQTT_Publish Soil_Moisture_Feed = Adafruit_MQTT_Publish(&mqtt, AIO_USERNAME "/feeds/soil_moisture");
 Adafruit_MQTT_Publish enviroFeed= Adafruit_MQTT_Publish(&mqtt, AIO_USERNAME "/feeds/enviromental_cond");
+Adafruit_MQTT_Publish reseviorFeed= Adafruit_MQTT_Publish(&mqtt, AIO_USERNAME "/feeds/Wah_Ter_Mee_Resevoir");
 
  
 SYSTEM_MODE(AUTOMATIC);
@@ -36,6 +37,7 @@ SYSTEM_MODE(AUTOMATIC);
 
 const int EM_F_PUMP_PIN = D3;
 const int CAP_SENSOR_PIN = A5;
+const int WATER_LEVEL_PIN = D17;
 //const int LED_CONT_PIN = D15;
 
 int quality;
@@ -57,7 +59,7 @@ const unsigned int PUMP_ON_TIME = 500;
 const unsigned int PUBLISH_TIME = (60000*60);
 const unsigned int FLASHTIME = 500;
 //unsigned int PIXEL_FLASH_TIMER;
-unsigned int lastTime, lastSoil, lastAQ, lastBME, lastAQ_PUB, pixel_Flash_Timer;
+unsigned int last_waterRead, lastTime, lastSoil, lastAQ, lastBME, lastAQ_PUB, pixel_Flash_Timer;
 const unsigned int TWICE_PER_DAY = ((60000*60)*12);
 const unsigned int ONCE_PER_HOUR = (60000*60);
 const unsigned int ONCE_PER_MIN = 60000;
@@ -72,7 +74,9 @@ int capValue;
 float qualValue;
 float AQ_Adjusted;
 int soil_Adjusted; 
+bool waterIsWet;
 int OnOff;
+
 
 struct Enviromental_Cond{
   float TempF;
@@ -133,6 +137,7 @@ void setup() {
 
   pinMode(CAP_SENSOR_PIN,INPUT);
   pinMode(EM_F_PUMP_PIN,OUTPUT);
+  pinMode(WATER_LEVEL_PIN,INPUT);
   //pinMode(LED_CONT_PIN,OUTPUT);
 
   pixel_Flash_Timer = millis();
@@ -166,6 +171,23 @@ void loop() {
     //pixel.show;
   
   //}
+
+///////////////////////////////////////////////////////////////////////////////////
+// Water level Sensor
+///////////////////////////////////////////////////////////////////////////////////
+if (millis()-last_waterRead>ONCE_PER_MIN/4){//ONCE_PER_HOUR*24){
+  waterIsWet=digitalRead(WATER_LEVEL_PIN);
+  if(!waterIsWet){
+    reseviorFeed.publish(0);
+  }else{
+    reseviorFeed.publish(1);
+  }
+  last_waterRead = millis();
+}
+
+
+
+
 ///////////////////////////////////////////////////////////////////////////////////
 //BME_280 control
 ///////////////////////////////////////////////////////////////////////////////////
@@ -255,10 +277,11 @@ void loop() {
 ///////////////////////////////////////////////////////////////////////////////////
 
   ////////////////////////////////////////////// Reads the soil sensor , sends value to SERIAL and OLED
-  if(millis()-lastSoil>ONCE_PER_HOUR/120){//(TWICE_PER_DAY/12)/240){
+  if(millis()-lastSoil>ONCE_PER_MIN/6){//(TWICE_PER_DAY/12)/240){
     capValue = analogRead(CAP_SENSOR_PIN);
-    soil_Adjusted = 100 - (capValue*100/4095);
-    Serial.printf("Cap sense = %i\n",soil_Adjusted );
+    Serial.printf("Cap sensor raw value = %i\n \n",capValue);
+    soil_Adjusted = 100 - (capValue * 100/4095);
+    Serial.printf("Adjusted Value = %i\n\n",soil_Adjusted );
     Soil_Moisture_Feed.publish(soil_Adjusted);
     Serial.printf("Soil Moisture Sent!\n");
     if(capValue>=DRY_SOIL){
