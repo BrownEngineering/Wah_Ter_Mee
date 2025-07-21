@@ -64,7 +64,7 @@ const unsigned int TWICE_PER_DAY = ((60000*60)*12);
 const unsigned int ONCE_PER_HOUR = (60000*60);
 const unsigned int ONCE_PER_MIN = 60000;
 
-bool shouldBreatheGreen, shouldBreatheBlue, shouldBlinkRed;
+bool shouldBreatheGreen, shouldBreatheBlue, shouldBlinkRed, red_Lock;
 bool lightControl = false;
 
 bool pumpIsRunning = false;
@@ -154,17 +154,24 @@ void setup() {
 //////////////////////////////////////////////////////////////////////////////////////////////////////////
 void loop() {
   if(lightControl){
-    if (shouldBreatheGreen){
-      pixelFullBreathe(start,end,green);
-     // pixelFullBreathe(start,end,indigo);
-    }
-    if(shouldBreatheBlue){
-      pixelFullBreathe(start,end,blue);
-      //pixelFullBreathe(start,end,tomato);
-    }
-    if(shouldBlinkRed){
-      pixelFullBlink(start,end,red);
-    }
+    if(!red_Lock){
+      if (shouldBreatheGreen){
+        pixelFullBreathe(start,end,green);
+      // pixelFullBreathe(start,end,indigo);
+      }
+      if(shouldBreatheBlue){
+        pixelFullBreathe(start,end,blue);
+        //pixelFullBreathe(start,end,tomato);
+      }
+  }
+    if(red_Lock){
+      if(shouldBlinkRed){
+        pixel.clear();
+        pixel.show();
+        pixelFullBlink(start,end,red);
+        red_Lock=false;
+      }
+  }
   }//else{
     //lightControl = false;
     //pixel.clear;
@@ -179,8 +186,10 @@ if (millis()-last_waterRead>ONCE_PER_MIN/4){//ONCE_PER_HOUR*24){
   waterIsWet=digitalRead(WATER_LEVEL_PIN);
   if(!waterIsWet){
     reseviorFeed.publish(0);
+    Serial.printf("Water in NOT Wet\n \n");
   }else{
     reseviorFeed.publish(1);
+    Serial.printf("Water is SOOOOOO wet.\n \n");
   }
   last_waterRead = millis();
 }
@@ -235,11 +244,13 @@ if (millis()-last_waterRead>ONCE_PER_MIN/4){//ONCE_PER_HOUR*24){
   if(millis()-lastAQ>ONCE_PER_HOUR/120){
     Serial.printf("AIR QUALITY Sensor value: %i\n \n",sensor.getValue());
     AQ_Adjusted = (sensor.getValue()*.0244);
-    Serial.printf("AQ adjusted = %00f\n \n",AQ_Adjusted);
+    Serial.printf("AQ adjusted = %0f\n \n",AQ_Adjusted);
     if (quality == AirQualitySensor::FORCE_SIGNAL) {
       AQFeed.publish(sensor.getValue()*.0244);
 
         lightControl = true;
+        red_Lock = true;
+        Serial.printf("RED_LOCK_TRUE\n \n");
         shouldBlinkRed = true;
         shouldBreatheBlue = false;
         shouldBreatheGreen = false;
@@ -250,7 +261,9 @@ if (millis()-last_waterRead>ONCE_PER_MIN/4){//ONCE_PER_HOUR*24){
         AQFeed.publish(sensor.getValue()*.0244);
  
         lightControl = true;
-        //shouldBlinkRed = true;
+        red_Lock = true;
+        Serial.printf("RED_LOCK_TRUE\n \n");
+        shouldBlinkRed = true;
         shouldBreatheBlue = false;
         shouldBreatheGreen = false;
           // SEND SMS or EMAIL LOGIC here;
@@ -258,9 +271,17 @@ if (millis()-last_waterRead>ONCE_PER_MIN/4){//ONCE_PER_HOUR*24){
         
       } else if (quality == AirQualitySensor::LOW_POLLUTION) {
           Serial.printf("Low pollution!\n");
+          lightControl = true;
+          shouldBlinkRed = false;
+          red_Lock = false;
+          Serial.printf("RED_LOCK_FALSE\n \n");
 
       } else if (quality == AirQualitySensor::FRESH_AIR) {        
           Serial.printf("Fresh air.\n");
+          lightControl = true;
+          shouldBlinkRed = false;
+          red_Lock = false;
+          Serial.printf("RED_LOCK_FALSE\n \n");
       }
 
     lastAQ=millis();
@@ -290,19 +311,25 @@ if (millis()-last_waterRead>ONCE_PER_MIN/4){//ONCE_PER_HOUR*24){
         pumpTimer.startTimer(PUMP_ON_TIME);
         Serial.printf("SOIL IS DRY\n-------PUMP ON!\n");
         lightControl = true;
-        shouldBlinkRed = false;
-        shouldBreatheBlue = false;
-        shouldBreatheGreen = true;
-        pumpIsRunning = true;
-      }
+        if(!red_Lock){
+          Serial.printf("Soil Red Lock Tester\n \n");
+          shouldBlinkRed = false;
+          shouldBreatheBlue = false;
+          shouldBreatheGreen = true;
+          pumpIsRunning = true;
+        }
+       }
      }
       if(capValue<=WET_SOIL){
         lightControl = true;
-        shouldBreatheBlue = true;        
-        shouldBlinkRed = false;
-        shouldBreatheGreen = false;
-        Serial.printf("SOIL IS WET\n");
-      }
+        if(!red_Lock){
+          Serial.printf("Soil Red Lock Tester\n \n");
+          shouldBreatheBlue = true;        
+          shouldBlinkRed = false;
+          shouldBreatheGreen = false;
+          Serial.printf("SOIL IS WET\n");
+        }
+     }
     lastSoil=millis();
   }
   if((pumpIsRunning) && pumpTimer.isTimerReady()){
@@ -364,7 +391,7 @@ if (millis()-last_waterRead>ONCE_PER_MIN/4){//ONCE_PER_HOUR*24){
   int j;
 
   t=millis()/1000.0; //returns time from particle in ms
-  b=amp*sin(2*M_PI*1.0/1.5*t)+off;
+  b=amp*sin(2*M_PI*1.0/.75*t)+off;
 
   pixel.setBrightness(b);
 
